@@ -20,9 +20,9 @@ import easyocr
 
 #################### Global Variables #################### 
 ## Supply Full Path to TimeLapse directory
-# path = "/Users/stefanofochesatto/Desktop/CRREL-Solar-Project/TestTimeLapse" 
-path = r"C:\Users\Amanda Barker\Desktop\Stefano\CRREL-Solar-Project\TestTimeLapse"
-reader = easyocr.Reader(['en']) # Initilizing OCR Engine
+path = "/Users/stefanofochesatto/Desktop/CRREL-Solar-Project/TestTimeLapse" 
+# path = r"C:\Users\Amanda Barker\Desktop\Stefano\CRREL-Solar-Project\TestTimeLapse"
+reader = easyocr.Reader(['en']) # Initializing OCR Engine
 MaskCoordinates = [] # User defined Mask Coordinated global variable. 
 
 ## Initilizing Python lists to store our data
@@ -56,7 +56,7 @@ def ImageProcess(img):
 
     ### Running OCR engine on image ###
     print('Running OCR')
-    TimeStampText = reader.readtext(TimeStampCrop)
+    TimeStampText = reader.readtext(TimeStampCrop, allowlist = '0123456789:-PTSA ')
     TimeStampText = [val[1] for val in TimeStampText]
     print(TimeStampText)
 
@@ -75,21 +75,21 @@ def ImageProcess(img):
         ## Cropping the bounding rectangle
         rect = cv2.boundingRect(pts)
         x,y,w,h = rect
-        croped = img[y:y+h, x:x+w].copy()
+        cropped = img[y:y+h, x:x+w].copy()
 
         ## Generating the Mask
         pts = pts - pts.min(axis=0)
-        mask = np.zeros(croped.shape[:2], np.uint8)
+        mask = np.zeros(cropped.shape[:2], np.uint8)
         cv2.drawContours(mask, [pts], -1, (255, 255, 255), -1, cv2.LINE_AA)
 
         ############## Use Mask to threshold and pull the snow cover data
 
         ## Removing everything outside the Mask with bitwise operation
-        dst = cv2.bitwise_and(croped, croped, mask=mask)
+        dst = cv2.bitwise_and(cropped, cropped, mask=mask)
 
 
 
-        cv2.imwrite('test.png', dst2)
+        cv2.imwrite('test.png', dst)
        
     ## # Applying the threshold
     ## threshImage = copy.deepcopy(img)
