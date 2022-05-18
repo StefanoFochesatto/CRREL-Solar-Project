@@ -21,8 +21,8 @@ from scipy.fft import dstn
 
 #################### Global Variables #################### 
 ## Supply Full Path to TimeLapse directory
-path = "/Users/stefanofochesatto/Desktop/CRREL-Solar-Project/TestTimeLapse" 
-# path = r"C:\Users\Amanda Barker\Desktop\Stefano\CRREL-Solar-Project\TestTimeLapse"
+# path = "/Users/stefanofochesatto/Desktop/CRREL-Solar-Project/TestTimeLapse" 
+path = r"C:\Users\Amanda Barker\Desktop\Stefano\CRREL-Solar-Project\TestTimeLapse"
 reader = easyocr.Reader(['en']) # Initializing OCR Engine
 MaskCoordinates = [] # User defined Mask Coordinated global variable. 
 
@@ -89,31 +89,17 @@ def ImageProcess(img):
 
         ## Removing everything outside the Mask with bitwise operation
         dst = cv2.bitwise_and(cropped, cropped, mask=mask)
-
-        ############## Use Mask to threshold and pull the snow cover data
-        AdaptiveMeanThresh = cv2.adaptiveThreshold(dst, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-                                          cv2.THRESH_BINARY, 199, 5)
-        
-        AdaptiveGaussThresh = cv2.adaptiveThreshold(dst, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                                cv2.THRESH_BINARY, 199, 5)
-
-        # Otsu's thresholding after Gaussian filtering
-        dst = cv2.GaussianBlur(dst,(5,5),0)
-        cv2.imwrite('testGaussblur.png', dst)
-        linek = np.zeros((11,11),dtype=np.uint8)
-        linek[5,...]=1
-
-        x=cv2.morphologyEx(dst, cv2.MORPH_OPEN, linek ,iterations=1)
-        dst-=x
-
+        ## Setting background to gray (Helps with Nightime Thresholding)
+        bg = np.ones_like(cropped, np.uint8)*127
+        cv2.bitwise_not(bg,bg, mask=mask)
+        dst = bg+dst
+        ### THIS IS VERY IMPORTANT IT DEALS WITH THE LINES AND DOTS ON THE PANELS
+        dst = cv2.medianBlur(dst, ksize=5)
+        ### Applying Threshold
         ret3,th3 = cv2.threshold(dst,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+        ## Pixel math for SnowCover
+        SnowCover = (len(np.extract(mask > 0, th3)) - np.count_nonzero(np.extract(mask > 0, th3)))/len(np.extract(mask > 0, th3))
 
-
-
-        cv2.imwrite('testAdaptiveMean.png', AdaptiveMeanThresh)
-        cv2.imwrite('testAdaptiveGauss.png', AdaptiveGaussThresh)
-        cv2.imwrite('testGaussblurGlobalOtsu.png', ret3)
-        cv2.imwrite('testGaussblurGlobalOtsu1.png', th3) ## CONTINUE TESTING THIS METHOD
 
 
 
