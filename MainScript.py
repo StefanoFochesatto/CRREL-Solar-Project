@@ -14,6 +14,7 @@ import copy
 
 # For Optical Character Recognition
 import easyocr
+from scipy.fft import dstn
 
 
 
@@ -77,19 +78,47 @@ def ImageProcess(img):
         x,y,w,h = rect
         cropped = img[y:y+h, x:x+w].copy()
 
+        ## Converting the crop to gray scale
+        cropped = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
+
+
         ## Generating the Mask
         pts = pts - pts.min(axis=0)
         mask = np.zeros(cropped.shape[:2], np.uint8)
         cv2.drawContours(mask, [pts], -1, (255, 255, 255), -1, cv2.LINE_AA)
 
-        ############## Use Mask to threshold and pull the snow cover data
-
         ## Removing everything outside the Mask with bitwise operation
         dst = cv2.bitwise_and(cropped, cropped, mask=mask)
 
+        ############## Use Mask to threshold and pull the snow cover data
+        AdaptiveMeanThresh = cv2.adaptiveThreshold(dst, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+                                          cv2.THRESH_BINARY, 199, 5)
+        
+        AdaptiveGaussThresh = cv2.adaptiveThreshold(dst, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                                cv2.THRESH_BINARY, 199, 5)
+
+        # Otsu's thresholding after Gaussian filtering
+        dst = cv2.GaussianBlur(dst,(5,5),0)
+        cv2.imwrite('testGaussblur.png', dst)
+        linek = np.zeros((11,11),dtype=np.uint8)
+        linek[5,...]=1
+
+        x=cv2.morphologyEx(dst, cv2.MORPH_OPEN, linek ,iterations=1)
+        dst-=x
+
+        ret3,th3 = cv2.threshold(dst,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
 
 
-        cv2.imwrite('test.png', dst)
+
+        cv2.imwrite('testAdaptiveMean.png', AdaptiveMeanThresh)
+        cv2.imwrite('testAdaptiveGauss.png', AdaptiveGaussThresh)
+        cv2.imwrite('testGaussblurGlobalOtsu.png', ret3)
+        cv2.imwrite('testGaussblurGlobalOtsu1.png', th3) ## CONTINUE TESTING THIS METHOD
+
+
+
+
+
        
     ## # Applying the threshold
     ## threshImage = copy.deepcopy(img)
@@ -118,7 +147,7 @@ def click_event(event, x, y, flags, params):
 
         # Display Coordinates 
 		font = cv2.FONT_HERSHEY_SIMPLEX
-		cv2.putText(img, str(x) + ',' + str(y), (x,y), font, .5, (255,164,0))
+		cv2.putText(img,'+', (x,y), font, .2, (255,164,0))
 		cv2.imshow('image', img)
 
 	# Listening for Right Click	
@@ -131,12 +160,12 @@ def click_event(event, x, y, flags, params):
 
 		# Display Coordinates 
 		font = cv2.FONT_HERSHEY_SIMPLEX
-		cv2.putText(img, str(x) + ',' + str(y), (x,y), font, .5, (255,164,0))
+		cv2.putText(img,'+', (x,y), font, .2, (255,164,0))
 		cv2.imshow('image', img)
 
 
 # Driver function for MaskCoordinates array generation
-# This function will take the inital frame of ever timelapse video
+# This function will take the initial frame of ever timelapse video
 def generateMasks(img):
 	# Displaying the image
 	cv2.imshow('image', img)
