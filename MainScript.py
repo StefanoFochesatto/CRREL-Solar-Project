@@ -16,6 +16,9 @@ import copy
 import easyocr
 from scipy.fft import dstn
 
+# For Timing Function 
+import time
+
 
 
 
@@ -29,6 +32,8 @@ MaskCoordinates = [] # User defined Mask Coordinated global variable.
 ## Initilizing Python lists to store our data
 TimeStamp = []
 SnowCover = []
+# Testing video
+imgArray = []
 
 
 
@@ -57,19 +62,25 @@ def ImageProcess(img):
 
     ### Running OCR engine on image ###
     print('Running OCR')
-    TimeStampText = reader.readtext(TimeStampCrop, allowlist = '0123456789:-PTSA ')
+    TimingOCR = time.time()
+    TimeStampText = reader.readtext(TimeStampCrop, allowlist = '0123456789:-PTSA ', width_ths=1)
     TimeStampText = [val[1] for val in TimeStampText]
-    print(TimeStampText)
+    TimingOCRELAPSED = time.time() - TimingOCR
+    print('Frame TimeStamp: ',TimeStampText)
+    print('OCR Processing took: ',str(TimingOCRELAPSED))
 
 
     ### Updating Global Data Lists ###
     global TimeStamp
-    TimeStamp.append(TimeStampText)
+    TimeStamp.append(TimeStampText[0])
 
 
 
+    SnowCoverFrame = []
     ####### Extracting SnowCover Data with User Defined Masks #######
     ### Cropping the Panels ###
+    print('Running Image Processing')
+    TimingImageProcess = time.time()
     for i in range(0,len(MaskCoordinates),4):
         pts = np.array([MaskCoordinates[i],MaskCoordinates[i+1],MaskCoordinates[i+2],MaskCoordinates[i+3]])
         
@@ -98,25 +109,26 @@ def ImageProcess(img):
         ### Applying Threshold
         ret3,th3 = cv2.threshold(dst,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
         ## Pixel math for SnowCover
-        SnowCover = (len(np.extract(mask > 0, th3)) - np.count_nonzero(np.extract(mask > 0, th3)))/len(np.extract(mask > 0, th3))
+        SnowCoverFrame.append((len(np.extract(mask > 0, th3)) - np.count_nonzero(np.extract(mask > 0, th3)))/len(np.extract(mask > 0, th3)))
+        testFrame = cv2.hconcat([cropped, th3, dst])
+        global imgArray
+        imgArray.append(testFrame)
 
 
 
 
 
 
-       
-    ## # Applying the threshold
-    ## threshImage = copy.deepcopy(img)
-    ## ret, thresh = cv2.threshold(threshImage,0,255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    ## 
-    ## # Creating the masks
-    ## mask_fore = copy.deepcopy(img)
-    ## mask_fore = np.where((img).astype(np.uint8) > ret, 0, 255)  
-    ## image_fore = Image.fromarray((mask_fore).astype(np.uint8))
-    ## os.chdir(str(path+'/Foreground_Masks'))
-    ## image_fore.save(str(i),"JPEG") 
-    # importing the module
+
+
+
+
+
+    global SnowCover
+    SnowCover.append(SnowCoverFrame)
+    TimingImageProcessELAPSED = time.time() - TimingImageProcess
+    print('Image Processing took: ', str(TimingImageProcessELAPSED))
+        
 
 
 # Callback function for getting coordinates of the solar panel mask from 
@@ -183,10 +195,13 @@ if __name__ == "__main__":
         os.chdir(path) # We have to set the path everytime since cv2 can't handle relative paths without it.
         currentVideo = cv2.VideoCapture(i, cv2.IMREAD_GRAYSCALE) # Reading in the current TimeLapse Video
         success, img = currentVideo.read()
-        fno = 0
-        #Get Points to generate mask for each recording. 
-        sample_rate = 1
+        # #Bump the contrast and get points to generate mask for each recording. 
+        # grayimg = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        # img = clahe.apply(grayimg)
         generateMasks(img)
+        fno = 0 
+        sample_rate = 1
         while success:
             if fno % sample_rate == 0:
                 ImageProcess(img)
@@ -197,4 +212,18 @@ if __name__ == "__main__":
     
         ## Resetting mask coordinates list
         MaskCoordinates = []
+
+        ############### Data Preparation ###############
+        data = {'TimeStamp':TimeStamp, 'SnowCover':SnowCover}
+        df = pd.DataFrame(data)
+        df.to_csv('test.csv', index=False)
+        height, width = imgArray[0].shape
+        size = (width,height)
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter('TestVideo.mp4', fourcc, 20, size)
+        for i in range(len(imgArray)):
+            out.write(imgArray[i])
+        out.release()
+
+    
 
