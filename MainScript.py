@@ -15,9 +15,11 @@ import copy
 # For Optical Character Recognition
 import easyocr
 from scipy.fft import dstn
+from datetime import datetime 
 
 # For Timing Function 
 import time
+
 
 
 
@@ -30,6 +32,7 @@ reader = easyocr.Reader(['en']) # Initializing OCR Engine
 MaskCoordinates = [] # User defined Mask Coordinated global variable. 
 
 ## Initilizing Python lists to store our data
+TimeStampBuffer = []
 TimeStamp = []
 SnowCover = []
 # Testing video
@@ -38,41 +41,89 @@ imgArray = []
 
 
 
+
+
+
 #################### Helper Functions ####################
 # Function for processing the data from an image frame
 # takes the openCV image object for each frame as 'img' and the user define points
 # for each solar panel as 'Mask'(python list)
+
+## Perfoming Otsu Global Thresholding inside of Masked area. 
+## Count number of zeros outside of mask, remove them from frequency histogram
+## Compute Threshold normally. 
+def FindThreshold(dst, mask):
+    NumberOfZerosinBorder = np.where(mask==0)[0].size
+    hist = cv2.calcHist([dst],[0],None,[256],[0,256])
+    hist[0] = hist[0] - NumberOfZerosinBorder
+    hist_norm = hist.ravel()/hist.sum()
+    Q = hist_norm.cumsum()
+    bins = np.arange(256)
+    fn_min = np.inf
+    thresh = -1
+    for i in range(1,256):
+        p1,p2 = np.hsplit(hist_norm,[i]) # probabilities
+        q1,q2 = Q[i],Q[255]-Q[i] # cum sum of classes
+        if q1 < 1.e-6 or q2 < 1.e-6:
+            continue
+        b1,b2 = np.hsplit(bins,[i]) # weights
+        # finding means and variances
+        m1,m2 = np.sum(p1*b1)/q1, np.sum(p2*b2)/q2
+        v1,v2 = np.sum(((b1-m1)**2)*p1)/q1,np.sum(((b2-m2)**2)*p2)/q2
+        # calculates the minimization function
+        fn = v1*q1 + v2*q2
+        if fn < fn_min:
+            fn_min = fn
+            thresh = i
+
+    return thresh
+
+
+
 def ImageProcess(img):
 
-    ####### Extracting Timestamp Data with easyOCR ####### 
-    TimeStampCrop = img[0:60,0:860]
-    ## Preprocessing ##
-    # Resizing
-    TimeStampCrop = cv2.resize(TimeStampCrop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    # Adding Border
-    TimeStampCrop = cv2.copyMakeBorder(TimeStampCrop, 80, 80, 80, 80, cv2.BORDER_CONSTANT, value=[0, 0, 0])
-    # Converting to GrayScale
-    TimeStampCrop = cv2.cvtColor(TimeStampCrop, cv2.COLOR_BGR2GRAY)
-    # Dilation and Erosion
-    kernel = np.ones((1, 1), np.uint8)
-    TimeStampCrop = cv2.dilate(TimeStampCrop, kernel, iterations=10)
-    TimeStampCrop = cv2.erode(TimeStampCrop, kernel, iterations=1)
-    # Applying Blur
-    TimeStampCrop = cv2.threshold(cv2.medianBlur(TimeStampCrop, 1), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-
-    ### Running OCR engine on image ###
-    print('Running OCR')
-    TimingOCR = time.time()
-    TimeStampText = reader.readtext(TimeStampCrop, allowlist = '0123456789:-PTSA ', width_ths=1)
-    TimeStampText = [val[1] for val in TimeStampText]
-    TimingOCRELAPSED = time.time() - TimingOCR
-    print('Frame TimeStamp: ',TimeStampText)
-    print('OCR Processing took: ',str(TimingOCRELAPSED))
-
-
-    ### Updating Global Data Lists ###
+    ############ REFACTOR THIS ##################################################
+    #########################################################################################################
     global TimeStamp
-    TimeStamp.append(TimeStampText[0])
+    global TimeStampBuffer
+    ## Add PSA Classification
+    if (len(TimeStampBuffer) <= 2):
+        ####### Extracting Timestamp Data with easyOCR ####### 
+        TimeStampCrop = img[0:60,0:860]
+        ## Preprocessing ##
+        # Resizing
+        TimeStampCrop = cv2.resize(TimeStampCrop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        # Adding Border
+        TimeStampCrop = cv2.copyMakeBorder(TimeStampCrop, 80, 80, 80, 80, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+        # Converting to GrayScale
+        TimeStampCrop = cv2.cvtColor(TimeStampCrop, cv2.COLOR_BGR2GRAY)
+        # Dilation and Erosion
+        kernel = np.ones((1, 1), np.uint8)
+        TimeStampCrop = cv2.dilate(TimeStampCrop, kernel, iterations=10)
+        TimeStampCrop = cv2.erode(TimeStampCrop, kernel, iterations=1)
+        # Applying Blur
+        TimeStampCrop = cv2.threshold(cv2.medianBlur(TimeStampCrop, 1), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+        ### Running OCR engine on image ###
+        print('Running OCR')
+        TimingOCR = time.time()
+        TimeStampText = reader.readtext(TimeStampCrop, allowlist = '0123456789:-PTSA ', width_ths=1)
+        TimeStampText = [val[1] for val in TimeStampText]
+        TimingOCRELAPSED = time.time() - TimingOCR
+        print('Frame TimeStamp: ',TimeStampText)
+        print('OCR Processing took: ',str(TimingOCRELAPSED))
+        
+        ### Updating Global Data Lists ###
+        CurrentTimeStamp = datetime.strptime(TimeStampText[0][0:19], "%Y-%m-%d %H:%M:%S")
+        print(CurrentTimeStamp)
+        TimeStamp.append(CurrentTimeStamp)
+        TimeStampBuffer.append(CurrentTimeStamp)
+    else:    
+        TimestampDifference =  TimeStamp[1] - TimeStamp[0]
+        print(TimeStamp[-1] + TimestampDifference)
+        TimeStamp.append(TimeStamp[-1] + TimestampDifference)
+    ############ REFACTOR THIS ##################################################
+    #########################################################################################################
 
 
 
@@ -101,25 +152,25 @@ def ImageProcess(img):
         ## Removing everything outside the Mask with bitwise operation
         dst = cv2.bitwise_and(cropped, cropped, mask=mask)
         ## Setting background to gray (Helps with Nightime Thresholding)
-        bg = np.ones_like(cropped, np.uint8)*127
+        bg = np.ones_like(cropped, np.uint8)*0
         cv2.bitwise_not(bg,bg, mask=mask)
         dst = bg+dst
         ### THIS IS VERY IMPORTANT IT DEALS WITH THE LINES AND DOTS ON THE PANELS
-        dst = cv2.medianBlur(dst, ksize=5)
+        dst = cv2.medianBlur(dst, ksize=7)
+        dst = cv2.bilateralFilter(dst,9,75,75)
+        dst = cv2.GaussianBlur(dst,(5,5),20)
+
+        Thresh = FindThreshold(dst, mask)
+        if (Thresh <= 100):
+            Thresh = 100
+
         ### Applying Threshold
-        ret3,th3 = cv2.threshold(dst,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+        ret3,th3 = cv2.threshold(dst,Thresh,255,cv2.THRESH_BINARY)
         ## Pixel math for SnowCover
-        SnowCoverFrame.append((len(np.extract(mask > 0, th3)) - np.count_nonzero(np.extract(mask > 0, th3)))/len(np.extract(mask > 0, th3)))
+        SnowCoverFrame.append(1 - ((len(np.extract(mask > 0, th3)) - np.count_nonzero(np.extract(mask > 0, th3)))/len(np.extract(mask > 0, th3))))
         testFrame = cv2.hconcat([cropped, th3, dst])
         global imgArray
         imgArray.append(testFrame)
-
-
-
-
-
-
-
 
 
 
@@ -212,18 +263,19 @@ if __name__ == "__main__":
     
         ## Resetting mask coordinates list
         MaskCoordinates = []
+        TimeStampBuffer = []
 
-        ############### Data Preparation ###############
-        data = {'TimeStamp':TimeStamp, 'SnowCover':SnowCover}
-        df = pd.DataFrame(data)
-        df.to_csv('test.csv', index=False)
-        height, width = imgArray[0].shape
-        size = (width,height)
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter('TestVideo.mp4', fourcc, 20, size)
-        for i in range(len(imgArray)):
-            out.write(imgArray[i])
-        out.release()
+    ############### Data Preparation ###############
+    data = {'TimeStamp':TimeStamp, 'SnowCover':SnowCover}
+    df = pd.DataFrame(data)
+    df.to_csv('test.csv', index=False)
+    height, width = imgArray[0].shape
+    size = (width,height)
+    out = cv2.VideoWriter('output_video.avi',cv2.VideoWriter_fourcc(*'DIVX'), 60, size, 0)
+    for i in range(len(imgArray)):
+        out.write(imgArray[i])
+    out.release()
 
     
+
 
