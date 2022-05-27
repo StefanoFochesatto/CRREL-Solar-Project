@@ -30,6 +30,14 @@ import time
 path = r"C:\Users\Amanda Barker\Desktop\Stefano\CRREL-Solar-Project\TestTimeLapse"
 reader = easyocr.Reader(['en']) # Initializing OCR Engine
 MaskCoordinates = [] # User defined Mask Coordinated global variable. 
+PanelDictionary = {
+    '2':[10, 8, 2, 5],
+    '1':[1, 4, 7, 11], 
+    '3':[9, 3, 6, 12]
+}
+
+
+
 
 ## Initilizing Python lists to store our data
 TimeStampBuffer = []
@@ -37,6 +45,7 @@ TimeStamp = []
 SnowCover = []
 # Testing video
 imgArray = []
+prevThresh = 100
 
 
 
@@ -80,41 +89,55 @@ def FindThreshold(dst, mask):
 
 
 
-def ImageProcess(img):
+def OCRPreProcess(img):
+        img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        # Adding Border
+        img = cv2.copyMakeBorder(img, 80, 80, 80, 80, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+        # Converting to GrayScale
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        # Dilation and Erosion
+        kernel = np.ones((1, 1), np.uint8)
+        img = cv2.dilate(img, kernel, iterations=10)
+        img = cv2.erode(img, kernel, iterations=1)
+        # Applying Blur
+        img = cv2.threshold(cv2.medianBlur(img, 1), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        return img
 
-    ############ REFACTOR THIS ##################################################
-    #########################################################################################################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def TimeStampCollation(img):
     global TimeStamp
     global TimeStampBuffer
     ## Add PSA Classification
-    if (len(TimeStampBuffer) <= 2):
+    if (len(TimeStampBuffer) < 2):
         ####### Extracting Timestamp Data with easyOCR ####### 
-        TimeStampCrop = img[0:60,0:860]
+        TimeStampCrop = img[0:60,0:620]
         ## Preprocessing ##
-        # Resizing
-        TimeStampCrop = cv2.resize(TimeStampCrop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-        # Adding Border
-        TimeStampCrop = cv2.copyMakeBorder(TimeStampCrop, 80, 80, 80, 80, cv2.BORDER_CONSTANT, value=[0, 0, 0])
-        # Converting to GrayScale
-        TimeStampCrop = cv2.cvtColor(TimeStampCrop, cv2.COLOR_BGR2GRAY)
-        # Dilation and Erosion
-        kernel = np.ones((1, 1), np.uint8)
-        TimeStampCrop = cv2.dilate(TimeStampCrop, kernel, iterations=10)
-        TimeStampCrop = cv2.erode(TimeStampCrop, kernel, iterations=1)
-        # Applying Blur
-        TimeStampCrop = cv2.threshold(cv2.medianBlur(TimeStampCrop, 1), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-
+        TimeStampCrop = OCRPreProcess(TimeStampCrop)
         ### Running OCR engine on image ###
         print('Running OCR')
         TimingOCR = time.time()
-        TimeStampText = reader.readtext(TimeStampCrop, allowlist = '0123456789:-PTSA ', width_ths=1)
+        TimeStampText = reader.readtext(TimeStampCrop, allowlist = '0123456789:- ', width_ths=1)
         TimeStampText = [val[1] for val in TimeStampText]
         TimingOCRELAPSED = time.time() - TimingOCR
         print('Frame TimeStamp: ',TimeStampText)
         print('OCR Processing took: ',str(TimingOCRELAPSED))
         
         ### Updating Global Data Lists ###
-        CurrentTimeStamp = datetime.strptime(TimeStampText[0][0:19], "%Y-%m-%d %H:%M:%S")
+        CurrentTimeStamp = datetime.strptime(TimeStampText[0], "%Y-%m-%d %H:%M:%S")
         print(CurrentTimeStamp)
         TimeStamp.append(CurrentTimeStamp)
         TimeStampBuffer.append(CurrentTimeStamp)
@@ -122,16 +145,98 @@ def ImageProcess(img):
         TimestampDifference =  TimeStamp[1] - TimeStamp[0]
         print(TimeStamp[-1] + TimestampDifference)
         TimeStamp.append(TimeStamp[-1] + TimestampDifference)
-    ############ REFACTOR THIS ##################################################
-    #########################################################################################################
+        
+
+
+def ExtractPanelID(img):
+    PanelID = img[0:60,835:860]
+    PanelID = OCRPreProcess(PanelID)
+    PanelIDText = reader.readtext(PanelID, allowlist = '123PTSA ', width_ths=1)
+    PanelIDText = [val[1] for val in PanelIDText]
+    return PanelIDText[0]
 
 
 
-    SnowCoverFrame = []
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def ImageProcess(img, PanelID):
+    TimeStampCollation(img)
+
+   # ############ REFACTOR THIS ##################################################
+   # #########################################################################################################
+   # global TimeStamp
+   # global TimeStampBuffer
+   # ## Add PSA Classification
+   # if (len(TimeStampBuffer) < 2):
+   #     ####### Extracting Timestamp Data with easyOCR ####### 
+   #     TimeStampCrop = img[0:60,0:620]
+   #     PanelID = img[0:60,620:860]
+   #     ## Preprocessing ##
+   #     # Resizing
+   #     TimeStampCrop = cv2.resize(TimeStampCrop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+   #     # Adding Border
+   #     TimeStampCrop = cv2.copyMakeBorder(TimeStampCrop, 80, 80, 80, 80, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+   #     # Converting to GrayScale
+   #     TimeStampCrop = cv2.cvtColor(TimeStampCrop, cv2.COLOR_BGR2GRAY)
+   #     # Dilation and Erosion
+   #     kernel = np.ones((1, 1), np.uint8)
+   #     TimeStampCrop = cv2.dilate(TimeStampCrop, kernel, iterations=10)
+   #     TimeStampCrop = cv2.erode(TimeStampCrop, kernel, iterations=1)
+   #     # Applying Blur
+   #     TimeStampCrop = cv2.threshold(cv2.medianBlur(TimeStampCrop, 1), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+   #
+   #     ### Running OCR engine on image ###
+   #     print('Running OCR')
+   #     TimingOCR = time.time()
+   #     TimeStampText = reader.readtext(TimeStampCrop, allowlist = '0123456789:- ', width_ths=1)
+   #     TimeStampText = [val[1] for val in TimeStampText]
+   #     TimingOCRELAPSED = time.time() - TimingOCR
+   #     print('Frame TimeStamp: ',TimeStampText)
+   #     print('OCR Processing took: ',str(TimingOCRELAPSED))
+   #     
+   #     ### Updating Global Data Lists ###
+   #     CurrentTimeStamp = datetime.strptime(TimeStampText[0][0:19], "%Y-%m-%d %H:%M:%S")
+   #     print(CurrentTimeStamp)
+   #     TimeStamp.append(CurrentTimeStamp)
+   #     TimeStampBuffer.append(CurrentTimeStamp)
+   # else:    
+   #     TimestampDifference =  TimeStamp[1] - TimeStamp[0]
+   #     print(TimeStamp[-1] + TimestampDifference)
+   #     TimeStamp.append(TimeStamp[-1] + TimestampDifference)
+   # ############ REFACTOR THIS ##################################################
+   # #########################################################################################################
+
+
+
+    SnowCoverFrame = [PanelID]
     ####### Extracting SnowCover Data with User Defined Masks #######
     ### Cropping the Panels ###
     print('Running Image Processing')
     TimingImageProcess = time.time()
+
+
+
+    sampleintensity = img[0:60,870:890]
+    sampleintensity = cv2.cvtColor(sampleintensity, cv2.COLOR_BGR2GRAY)
+    sampleintensity = cv2.mean(sampleintensity)[0]
     for i in range(0,len(MaskCoordinates),4):
         pts = np.array([MaskCoordinates[i],MaskCoordinates[i+1],MaskCoordinates[i+2],MaskCoordinates[i+3]])
         
@@ -155,19 +260,34 @@ def ImageProcess(img):
         bg = np.ones_like(cropped, np.uint8)*0
         cv2.bitwise_not(bg,bg, mask=mask)
         dst = bg+dst
-        ### THIS IS VERY IMPORTANT IT DEALS WITH THE LINES AND DOTS ON THE PANELS
+        ### THIS IS VERY IMPORTANT IT DEALS WITH THE LINES AND DOTS ON THE PANELS AND IS The Main Preprocessing ###
         dst = cv2.medianBlur(dst, ksize=7)
         dst = cv2.bilateralFilter(dst,9,75,75)
-        dst = cv2.GaussianBlur(dst,(5,5),20)
+        #dst = cv2.GaussianBlur(dst,(5,5),20)
+        M = np.ones(dst.shape,  dtype="uint8") * int(sampleintensity/5)
+        dst = cv2.subtract(dst, M)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        dst = clahe.apply(dst)
 
+
+
+
+        ## Minimal threshold
+        global prevThresh
         Thresh = FindThreshold(dst, mask)
-        if (Thresh <= 100):
-            Thresh = 100
+        print(Thresh)
+        print(prevThresh)
+        if (Thresh <= 30):
+            Thresh = prevThresh
 
         ### Applying Threshold
         ret3,th3 = cv2.threshold(dst,Thresh,255,cv2.THRESH_BINARY)
         ## Pixel math for SnowCover
-        SnowCoverFrame.append(1 - ((len(np.extract(mask > 0, th3)) - np.count_nonzero(np.extract(mask > 0, th3)))/len(np.extract(mask > 0, th3))))
+        SnowCoverPercentage = 1 - ((len(np.extract(mask > 0, th3)) - np.count_nonzero(np.extract(mask > 0, th3)))/len(np.extract(mask > 0, th3)))
+        SnowCoverFrame.append((PanelDictionary[PanelID][int(i/4)], SnowCoverPercentage))
+
+
+
         testFrame = cv2.hconcat([cropped, th3, dst])
         global imgArray
         imgArray.append(testFrame)
@@ -246,16 +366,13 @@ if __name__ == "__main__":
         os.chdir(path) # We have to set the path everytime since cv2 can't handle relative paths without it.
         currentVideo = cv2.VideoCapture(i, cv2.IMREAD_GRAYSCALE) # Reading in the current TimeLapse Video
         success, img = currentVideo.read()
-        # #Bump the contrast and get points to generate mask for each recording. 
-        # grayimg = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        # img = clahe.apply(grayimg)
         generateMasks(img)
         fno = 0 
         sample_rate = 1
+        PanelID = ExtractPanelID(img)
         while success:
             if fno % sample_rate == 0:
-                ImageProcess(img)
+                ImageProcess(img, PanelID)
             # read next frame
 
             print('Next Frame')
