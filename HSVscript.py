@@ -69,7 +69,7 @@ cv.createTrackbar(low_V_name, window_detection_name , low_V, max_value, on_low_V
 cv.createTrackbar(high_V_name, window_detection_name , high_V, max_value, on_high_V_thresh_trackbar)
 path = r'C:\Users\Amanda Barker\Desktop\Stefano\CRREL-Solar-Project\TestTimeLapse' ##Supply Full Path to TimeLapse directory
 os.chdir(path) # We have to set the path everytime since cv2 can't handle relative paths without it.
-TestSetting = 2
+TestSetting = 8
 if (TestSetting == 1):
     ## Glare During The DAY
     img = cv.imread('TestImage3.png')
@@ -150,7 +150,7 @@ dst = cv.bilateralFilter(dst,9,75,75)
 
 while True:
     frame_HSV = cv.cvtColor(dst, cv.COLOR_BGR2HSV)
-    frame_threshold = cv.inRange(frame_HSV, (low_H, low_S, low_V), (high_H, high_S, high_V))
+    frame_threshold = cv.inRange(frame_HSV, (0, 0, 231), (180, 18, 255))
     
     
     cv.imshow(window_capture_name, dst)

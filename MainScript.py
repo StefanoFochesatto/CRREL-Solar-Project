@@ -16,12 +16,18 @@ import copy
 import easyocr
 from scipy.fft import dstn
 from datetime import datetime 
+from datetime import timedelta
+
 
 # For Timing Function 
 import time
 
+# For Sunrise/Sunset Flag
+from suntime import Sun, SunTimeException
 
-
+latitude = 64.95156082750202
+longitude = -147.6210085622378
+sun = Sun(latitude, longitude)
 
 
 #################### Global Variables #################### 
@@ -33,7 +39,8 @@ MaskCoordinates = [] # User defined Mask Coordinated global variable.
 PanelDictionary = {
     '2':[10, 8, 2, 5],
     '1':[1, 4, 7, 11], 
-    '3':[9, 3, 6, 12]
+    '3':[9, 3, 6, 12],
+    'A':['all', 'all', 'all', 'all']
 }
 
 
@@ -45,8 +52,8 @@ TimeStamp = []
 SnowCover = []
 # Testing video
 imgArray = []
-prevThresh = 100
-
+SunFlag = []
+prevThresh = []
 
 
 
@@ -106,6 +113,28 @@ def OCRPreProcess(img):
 
 
 
+
+
+def SunriseFlag(CurrentTime):
+    SunRiseTime = sun.get_local_sunrise_time(CurrentTime)
+    SunSetTime = sun.get_local_sunset_time(CurrentTime)
+
+    CurrentTime = CurrentTime.replace(tzinfo=None)
+    SunRiseTime = SunRiseTime.replace(tzinfo=None)
+    SunSetTime = SunSetTime.replace(tzinfo=None)
+    FlagWindow = 2
+    SunRiseStart = SunRiseTime - timedelta(hours = FlagWindow)
+    SunRiseEnd = SunRiseTime + timedelta(hours = FlagWindow)
+    
+    SunSetStart = SunSetTime - timedelta(hours = FlagWindow)
+    SunSetEnd = SunSetTime + timedelta(hours = FlagWindow)
+    
+    if (CurrentTime >= SunRiseStart and CurrentTime <= SunRiseEnd):
+        SunFlag.append(1)
+    elif (CurrentTime >= SunSetStart and CurrentTime <= SunSetEnd):
+        SunFlag.append(1)
+    else:
+        SunFlag.append(0)
 
 
 
@@ -179,7 +208,7 @@ def ExtractPanelID(img):
 
 def ImageProcess(img, PanelID):
     TimeStampCollation(img)
-
+    SunriseFlag(TimeStamp[-1])
    # ############ REFACTOR THIS ##################################################
    # #########################################################################################################
    # global TimeStamp
@@ -234,7 +263,7 @@ def ImageProcess(img, PanelID):
 
 
 
-    sampleintensity = img[0:60,870:890]
+    sampleintensity = img[0:60,890:910]
     sampleintensity = cv2.cvtColor(sampleintensity, cv2.COLOR_BGR2GRAY)
     sampleintensity = cv2.mean(sampleintensity)[0]
     for i in range(0,len(MaskCoordinates),4):
@@ -246,7 +275,7 @@ def ImageProcess(img, PanelID):
         cropped = img[y:y+h, x:x+w].copy()
 
         ## Converting the crop to gray scale
-        cropped = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
+        #cropped = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
 
 
         ## Generating the Mask
@@ -263,32 +292,65 @@ def ImageProcess(img, PanelID):
         ### THIS IS VERY IMPORTANT IT DEALS WITH THE LINES AND DOTS ON THE PANELS AND IS The Main Preprocessing ###
         dst = cv2.medianBlur(dst, ksize=7)
         dst = cv2.bilateralFilter(dst,9,75,75)
-        #dst = cv2.GaussianBlur(dst,(5,5),20)
-        M = np.ones(dst.shape,  dtype="uint8") * int(sampleintensity/5)
-        dst = cv2.subtract(dst, M)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        dst = clahe.apply(dst)
 
+        lab = cv2.cvtColor(dst, cv2.COLOR_BGR2LAB)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        lab[...,0] = clahe.apply(lab[...,0])
+        dst = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+        frame_HSV = cv2.cvtColor(dst, cv2.COLOR_BGR2HSV)
+        frame_threshold = cv2.inRange(frame_HSV, (0, 0, 90), (180, 18, 255))
+        #dst = cv2.GaussianBlur(dst,(5,5),20)
+        #print(int(sampleintensity/5))
+        #M = np.ones(dst.shape,  dtype="uint8") * int(sampleintensity/5)
+        #dst = cv2.add(dst, M)
+
+        #print(int(sampleintensity/5))
 
 
 
         ## Minimal threshold
-        global prevThresh
         Thresh = FindThreshold(dst, mask)
+        prevThresh.append(Thresh)
         print(Thresh)
-        print(prevThresh)
-        if (Thresh <= 30):
-            Thresh = prevThresh
+        if(len(prevThresh) >= 6):
+            CurrentMean = np.mean(prevThresh[-6:-1])
+            CurrentStd = np.std(prevThresh[-6:-1])
+
+            if (Thresh < CurrentMean - .5*CurrentStd or Thresh > CurrentMean - .5*CurrentStd):
+                Thresh = CurrentMean
+                prevThresh[-1] = Thresh
+        else:
+            CurrentMean = np.mean(prevThresh)
+            CurrentStd = np.std(prevThresh)
+
+            if (Thresh < CurrentMean - .5*CurrentStd or Thresh > CurrentMean - .5*CurrentStd):
+                Thresh = CurrentMean
+                prevThresh[-1] = Thresh
+
+        if (Thresh <= 50):
+            Thresh = 120
+
+
+
+
+
+
+        #print(Thresh,(70 - int(sampleintensity/2)))
+
+        print(Thresh)
+        # prevThresh.append(Thresh)
 
         ### Applying Threshold
         ret3,th3 = cv2.threshold(dst,Thresh,255,cv2.THRESH_BINARY)
         ## Pixel math for SnowCover
+        cropped = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
+        th3 = frame_threshold
         SnowCoverPercentage = 1 - ((len(np.extract(mask > 0, th3)) - np.count_nonzero(np.extract(mask > 0, th3)))/len(np.extract(mask > 0, th3)))
         SnowCoverFrame.append((PanelDictionary[PanelID][int(i/4)], SnowCoverPercentage))
 
 
 
-        testFrame = cv2.hconcat([cropped, th3, dst])
+        testFrame = th3
         global imgArray
         imgArray.append(testFrame)
 
