@@ -6,6 +6,5 @@ pandas==1.4.2
 Pillow==9.1.1
 schedule==1.1.0
 scikit_image==0.19.2
-sewar==0.4.5
 skimage==0.0
 suntime==1.2.5
