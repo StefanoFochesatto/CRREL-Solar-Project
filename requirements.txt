@@ -1,9 +1,9 @@
 easyocr==1.5.0
-matplotlib==3.5.2
 numpy==1.22.4
 opencv_python==4.5.4.60
 pandas==1.4.2
 Pillow==9.1.1
+progress==1.6
 schedule==1.1.0
 scikit_image==0.19.2
 skimage==0.0
