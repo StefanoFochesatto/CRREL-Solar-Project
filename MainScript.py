@@ -5,12 +5,12 @@
 from http.server import ThreadingHTTPServer
 import numpy as np
 import pandas as pd
+import csv
 # For Directory Management
 import os 
 # For Image Processing
 from PIL import Image
 import cv2  
-from matplotlib import pyplot as plt
 import copy
 
 # For Optical Character Recognition
@@ -28,6 +28,17 @@ from suntime import Sun, SunTimeException
 from skimage.metrics import normalized_root_mse
 import math
 
+# GUI and Terminal Elements
+from progress.bar import Bar
+from progress.spinner import MoonSpinner
+import tkinter
+from tkinter import filedialog
+from tkinter import messagebox
+
+root = tkinter.Tk()
+root.withdraw() #use to hide tkinter window
+
+
 
 latitude = 64.95156082750202
 longitude = -147.6210085622378
@@ -35,9 +46,6 @@ sun = Sun(latitude, longitude)
 
 
 #################### Global Variables #################### 
-## Supply Full Path to TimeLapse directory
-# path = "/Users/stefanofochesatto/Desktop/CRREL-Solar-Project/TestTimeLapse" 
-path = r"C:\Users\AKROStudent2\Desktop\CRREL-Solar-Project\TestTimeLapse"
 reader = easyocr.Reader(['en']) # Initializing OCR Engine
 PanelDictionary = { 
     '2':[10, 8, 2, 5],
@@ -52,8 +60,8 @@ GenerateVid = True
 ## Initilizing Python lists to store our data
 MaskCoordinates = [] # User defined Mask Coordinated global variable. 
 TimeStampBuffer = []
-TimeStamp = []
 SnowCover = []
+SnowCoverBuffer = []
 prevThresh = []
 
 
@@ -101,6 +109,13 @@ def FindThreshold(dst, mask):
 
     return thresh
 
+def search_for_file_path ():
+    currdir = os.getcwd()
+    tempdir = filedialog.askdirectory(parent=root, initialdir=currdir, title='Please select a directory')
+    if len(tempdir) > 0:
+        print ("You chose: %s" % tempdir)
+    return tempdir
+
 
 def OCRPreProcess(img):
         img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
@@ -140,7 +155,6 @@ def SunriseFlag(CurrentTime):
 
 
 def TimeStampCollation(img):
-    global TimeStamp
     global TimeStampBuffer
     ## Add PSA Classification
     if (len(TimeStampBuffer) < 2):
@@ -149,23 +163,25 @@ def TimeStampCollation(img):
         ## Preprocessing ##
         TimeStampCrop = OCRPreProcess(TimeStampCrop)
         ### Running OCR engine on image ###
-        print('Running OCR')
+        #print('Running OCR')
         TimingOCR = time.time()
         TimeStampText = reader.readtext(TimeStampCrop, allowlist = '0123456789:- ', width_ths=1)
         TimeStampText = [val[1] for val in TimeStampText]
         TimingOCRELAPSED = time.time() - TimingOCR
-        print('Frame TimeStamp: ',TimeStampText)
-        print('OCR Processing took: ',str(TimingOCRELAPSED))
+        #print('Frame TimeStamp: ',TimeStampText)
+        #print('OCR Processing took: ',str(TimingOCRELAPSED))
         
         ### Updating Global Data Lists ###
         CurrentTimeStamp = datetime.strptime(TimeStampText[0], "%Y-%m-%d %H:%M:%S")
+        CurrentTimeStamp = CurrentTimeStamp.replace(second=00)
         print(CurrentTimeStamp)
-        TimeStamp.append(CurrentTimeStamp)
         TimeStampBuffer.append(CurrentTimeStamp)
+        return CurrentTimeStamp
     else:    
-        TimestampDifference =  TimeStamp[1] - TimeStamp[0]
-        print(TimeStamp[-1] + TimestampDifference)
-        TimeStamp.append(TimeStamp[-1] + TimestampDifference)
+        TimestampDifference =  TimeStampBuffer[1] - TimeStampBuffer[0]
+        #print(TimeStampBuffer[-1] + TimestampDifference)
+        TimeStampBuffer.append(TimeStampBuffer[-1] + TimestampDifference)
+        return TimeStampBuffer[-1]
         
 
 def ExtractPanelID(img):
@@ -195,9 +211,10 @@ def vconcat_resize_min(im_list, interpolation=cv2.INTER_CUBIC):
 
 
 def ImageProcess(img, PanelID):
-    TimeStampCollation(img)
-    SunriseFlag(TimeStamp[-1])
-    SnowCoverFrame = [PanelID]
+    CurrentTimeStamp = TimeStampCollation(img)
+    SunriseFlag(CurrentTimeStamp)
+    
+    SnowCoverFrame = [CurrentTimeStamp]
     prevThreshFrame = []
     
 
@@ -206,7 +223,11 @@ def ImageProcess(img, PanelID):
 
     ####### Extracting SnowCover Data with User Defined Masks #######
     ### Cropping the Panels ###
-    print('Running Image Processing')
+    sampleintensity = img[0:60,870:890].copy()
+    sampleintensity = cv2.cvtColor(sampleintensity, cv2.COLOR_BGR2GRAY)
+    sampleintensity = cv2.mean(sampleintensity)[0]
+
+    #print('Running Image Processing')
     TimingImageProcess = time.time()
     for i in range(0,len(MaskCoordinates),4):
         pts = np.array([MaskCoordinates[i],MaskCoordinates[i+1],MaskCoordinates[i+2],MaskCoordinates[i+3]])
@@ -245,14 +266,17 @@ def ImageProcess(img, PanelID):
 
         ## Computing HSV Threshold (Color Threshold) ##
         frame_HSV = cv2.cvtColor(dst, cv2.COLOR_BGR2HSV)
-        HSV_Threshold = cv2.inRange(frame_HSV, (0, 0, 90), (180, 15, 255)) ## HSV Range for White/Greyish
+        if sampleintensity > 120:
+            HSV_Threshold = cv2.inRange(frame_HSV, (0, 0, 90), (180, 15, 255)) ## HSV Range for White/Greyish
+        else:
+            HSV_Threshold = cv2.inRange(frame_HSV, (0, 0, 120), (180, 15, 255)) ## HSV Range for White/Greyish
 
 
         ## Computing Otsu Threshold (Intensity Threshold) ##
         dst = cv2.cvtColor(dst, cv2.COLOR_BGR2GRAY)
         Thresh = FindThreshold(dst, mask)
         prevThreshFrame.append(Thresh)
-        print(Thresh)
+
 
         ## Gaussian Kernel Smoothing, on Otsu thresholds (kinda)##
         if(len(prevThresh) >= 6):
@@ -265,40 +289,39 @@ def ImageProcess(img, PanelID):
                 
         else:
             ThreshList = GetPrevThresh(int(i/4), 0) 
-            CurrentMean = np.mean(ThreshList)
-            CurrentStd = np.std(ThreshList)
-
-            if (Thresh < CurrentMean - .5*CurrentStd or Thresh > CurrentMean + .5*CurrentStd):
-                Thresh = CurrentMean
+            if (len(ThreshList) > 0):
+                CurrentMean = np.mean(ThreshList)
+                CurrentStd = np.std(ThreshList)
+                if (Thresh < CurrentMean - .5*CurrentStd or Thresh > CurrentMean + .5*CurrentStd):
+                    Thresh = CurrentMean
 
         Otsu_Threshold = cv2.threshold(dst,Thresh,255,cv2.THRESH_BINARY)[1]
         
         ## Comparing Both SnowCover Measurements ##
         score = normalized_root_mse(Otsu_Threshold, HSV_Threshold)
-        global SnowCover
-        if (score > .90 and len(SnowCover) > 0):
+        global SnowCoverBuffer
+        if (score > .90 and len(SnowCoverBuffer) > 0):
             HSVSnow = math.floor((1 - ((len(np.extract(mask > 0, HSV_Threshold)) - np.count_nonzero(np.extract(mask > 0, HSV_Threshold)))/len(np.extract(mask > 0, HSV_Threshold))))*100)/100
             OTSUSnow = math.floor((1 - ((len(np.extract(mask > 0, Otsu_Threshold)) - np.count_nonzero(np.extract(mask > 0, Otsu_Threshold)))/len(np.extract(mask > 0, Otsu_Threshold))))*100)/100
-            if (len(SnowCover) < 5):
-                SnowCoverKernel = SnowCover
+            if (len(SnowCoverBuffer) < 5):
+                SnowCoverKernel = SnowCoverBuffer
             else:        
-                SnowCoverKernel = SnowCover[-5:-1]
+                SnowCoverKernel = SnowCoverBuffer[-5:-1]
 
-            SnowCoverKernelList1 = [j[int(i/4)+1] for j in SnowCoverKernel]
-            SnowCoverKernelList = [j[1] for j in SnowCoverKernelList1]
+            SnowCoverKernelList = [j[int(i/4)+1] for j in SnowCoverKernel]
             meanSnowCover = np.mean(SnowCoverKernelList)
             if (abs(HSVSnow - meanSnowCover) > abs(OTSUSnow - meanSnowCover)):
                 Final = Otsu_Threshold
             else:
                 Final = HSV_Threshold
 
-        elif (len(SnowCover) == 0):
+        elif (len(SnowCoverBuffer) == 0):
             Final = HSV_Threshold
         else:
             Final = Otsu_Threshold
 
         SnowCoverPercentage = math.floor((1 - ((len(np.extract(mask > 0, Final)) - np.count_nonzero(np.extract(mask > 0, Final)))/len(np.extract(mask > 0, Final))))*100)/100
-        SnowCoverFrame.append((PanelDictionary[PanelID][int(i/4)], SnowCoverPercentage))
+        SnowCoverFrame.append(SnowCoverPercentage)
 
         if (GenerateVid):
             cropped = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
@@ -306,16 +329,18 @@ def ImageProcess(img, PanelID):
     
     if (GenerateVid):
         global imgArray 
-        imgArray.append(vconcat_resize_min(PanelVidArray))
+        VideoFrame = vconcat_resize_min(PanelVidArray)
+        height, width = VideoFrame.shape
+        VideoHeader = np.zeros((75,width), np.uint8)
+        cv2.putText(VideoHeader,CurrentTimeStamp.strftime("%Y-%m-%d %H:%M:00"),(0,60),cv2.FONT_HERSHEY_SIMPLEX,2,255,3)
+        imgArray.append(vconcat_resize_min([VideoHeader, VideoFrame]))
 
 
     prevThresh.append(prevThreshFrame)
-    SnowCover.append(SnowCoverFrame)
+    SnowCoverBuffer.append(SnowCoverFrame)
     TimingImageProcessELAPSED = time.time() - TimingImageProcess
-    print('Image Processing took: ', str(TimingImageProcessELAPSED))
+    #print('Image Processing took: ', str(TimingImageProcessELAPSED))
         
-
-
 # Callback function for getting coordinates of the solar panel mask from 
 # the click event. This will update the global MaskCoordinates Variable on Click
 def click_event(event, x, y, flags, params):
@@ -325,7 +350,7 @@ def click_event(event, x, y, flags, params):
 	if event == cv2.EVENT_LBUTTONDOWN:
 
         # Print and Append Coordinates
-		print(x, ' ', y)
+		#print(x, ' ', y)
 		MaskCoordinates.append((x, y))
 
         # Display Coordinates 
@@ -337,7 +362,7 @@ def click_event(event, x, y, flags, params):
 	if event==cv2.EVENT_RBUTTONDOWN:
 
         # Print and Append Coordinates
-		print(x, ' ', y)
+		#print(x, ' ', y)
 		MaskCoordinates.append((x, y))
 
 
@@ -362,53 +387,111 @@ def generateMasks(img):
 	# Closing the Image Window
 	cv2.destroyAllWindows()
 
+def CollateData():    
+
+    CollateStatus = messagebox.askyesno('Yes|No', 'Collate Data?')
+    
+    if (CollateStatus):
+        path = search_for_file_path()
+        os.chdir(path)
+        DataFrameList = [] #Pull the current list of files in TimeLapse directory
+        for file in os.listdir(path):
+            if file.endswith(".csv") and not file.startswith('.'): 
+                DataFrameList.append(file)
+        
+        
+        PTSA1 = pd.read_csv(DataFrameList[0])
+        PTSA2 = pd.read_csv(DataFrameList[1])
+        PTSA3 = pd.read_csv(DataFrameList[2])
+
+        FinalData = pd.merge(PTSA1, PTSA2, how="outer", on=["TimeStamp"])
+        FinalData = pd.merge(FinalData, PTSA3, how="outer", on=["TimeStamp"])
+        FinalData.to_csv('CollatedFinalData.csv', index=False)
 
 
 
 
 #################### Main Script ####################
 if __name__ == "__main__":
-    #### Directory Management ####
-    os.chdir(path) #Change the working directory to the TimeLapse directory
-    TimeLapseList = [] #Pull the current list of files in TimeLapse directory
-    for file in os.listdir(path):
-        if file.endswith(".mp4"): 
-            TimeLapseList.append(file)
 
+    ProcessingStatus = True
+    while(ProcessingStatus):
+        GenerateVid = messagebox.askyesno('Yes|No', 'Do you want to generate a test video?')
+        #### Directory Management ####
+        path = search_for_file_path()
+        os.chdir(path) #Change the working directory to the TimeLapse directory
+        TimeLapseList = [] #Pull the current list of files in TimeLapse directory
+        for file in os.listdir(path):
+            if file.endswith(".mp4") and not file.startswith('.'): 
+                TimeLapseList.append(file)
 
-    for i in TimeLapseList:
-        os.chdir(path) # We have to set the path everytime since cv2 can't handle relative paths without it.
-        currentVideo = cv2.VideoCapture(i, cv2.IMREAD_GRAYSCALE) # Reading in the current TimeLapse Video
-        success, img = currentVideo.read()
-        generateMasks(img)
-        fno = 0 
-        sample_rate = 1
-        PanelID = ExtractPanelID(img)
-        while success:
-            if fno % sample_rate == 0:
-                ImageProcess(img, PanelID)
-            # read next frame
-
-            print('Next Frame')
+       
+        for i in TimeLapseList:
+            os.chdir(path) # We have to set the path everytime since cv2 can't handle relative paths without it.
+            currentVideo = cv2.VideoCapture(i, cv2.IMREAD_GRAYSCALE) # Reading in the current TimeLapse Video
             success, img = currentVideo.read()
+            generateMasks(img)
+            fno = 0 
+            sample_rate = 1
+            PanelID = ExtractPanelID(img)
+            with MoonSpinner('Running Image Processing Algorithm ') as bar1:
+                while success:
+                    if fno % sample_rate == 0:
+                        ImageProcess(img, PanelID)
+                    # read next frame
+
+                    #print('Next Frame')
+                    success, img = currentVideo.read()
+                    bar1.next()
+        
+            ## Resetting mask coordinates list
+            MaskCoordinates = []
+            TimeStampBuffer = []
+            prevThresh = []
+            SnowCover.extend(SnowCoverBuffer)
+            SnowCoverBuffer = []
+            
+
+        ############### Writing Video ###############
+        if (GenerateVid):
+            height, width = imgArray[0].shape
+            size = (width,height)
+            out = cv2.VideoWriter('output_video.avi',cv2.VideoWriter_fourcc(*'DIVX'), 60, size, 0)
+            with Bar('Resizing Test Video Frames ...', fill='#', suffix='%(percent).1f%% - %(eta)ds') as bar:
+                for i in range(len(imgArray)):  
+                    imgArray[i] = cv2.resize(imgArray[i], size) 
+                    bar.next()
+            
+            with MoonSpinner('Exporting Test Video ...  ') as bar:
+                for i in range(len(imgArray)):
+                    out.write(imgArray[i])
+                    bar.next()
+                out.release()
+            imgArray = []
+
+        ############### Data Preparation ###############
+        header = [i for i in PanelDictionary[PanelID]]
+        header.insert(0, 'TimeStamp')
+        SnowCover.insert(0, header)
+
+        path = search_for_file_path()
+        os.chdir(path)
+        with open("PanelID_{}.csv".format(PanelID), "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerows(SnowCover)
+        
+
+        SnowCover = []
+        ProcessingStatus = messagebox.askyesno('Yes|No', 'Is there more data?')
     
-        ## Resetting mask coordinates list
-        MaskCoordinates = []
-        TimeStampBuffer = []
-
-    ############### Data Preparation ###############
-    data = {'TimeStamp':TimeStamp, 'SnowCover':SnowCover}
-    df = pd.DataFrame(data)
-    df.to_csv('test.csv', index=False)
+    CollateData()
+        
 
 
-    if (GenerateVid):
-        height, width = imgArray[0].shape
-        size = (width,height)
-        out = cv2.VideoWriter('output_video.avi',cv2.VideoWriter_fourcc(*'DIVX'), 60, size, 0)
-        for i in range(len(imgArray)):
-            out.write(imgArray[i])
-        out.release()
+    
+
+
+
 
     
 
