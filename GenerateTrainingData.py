@@ -3,7 +3,6 @@
 #################### Dependencies #################### 
 # For Data Management
 from http.server import ThreadingHTTPServer
-from tabnanny import verbose
 import numpy as np
 import pandas as pd
 import csv
@@ -13,11 +12,21 @@ import os
 from PIL import Image
 import cv2  
 import copy
-import math
+
 # For Optical Character Recognition
 import easyocr
 from datetime import datetime 
 from datetime import timedelta
+
+# For Timing Function 
+import time
+
+# For Sunrise/Sunset Flag
+from suntime import Sun, SunTimeException
+
+# For threshold comparison and snowcover calculations
+from skimage.metrics import normalized_root_mse
+import math
 
 # GUI and Terminal Elements
 from progress.bar import Bar
@@ -26,35 +35,14 @@ import tkinter
 from tkinter import filedialog
 from tkinter import messagebox
 
-
-
-import tensorflow as tf
-import segmentation_models as sm
-import glob
-from matplotlib import pyplot as plt
-import keras 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from tensorflow.keras.utils import normalize
-from keras.metrics import MeanIoU
-from keras.utils import to_categorical
-from keras.models import load_model
-
-
-
-
-model1 = load_model('saved_models/linkNet_arch_res50_backbone_50epochs.hdf5', compile=False)
-BACKBONE1 = 'resnet50'
-preprocess_input1 = sm.get_preprocessing(BACKBONE1)
 root = tkinter.Tk()
 root.withdraw() #use to hide tkinter window
-#Resizing images, if needed
-SIZE_X = 416 
-SIZE_Y = 640
 
 
 
-
+latitude = 64.95156082750202
+longitude = -147.6210085622378
+sun = Sun(latitude, longitude)
 
 
 #################### Global Variables #################### 
@@ -67,16 +55,19 @@ PanelDictionary = {
 }
 GenerateVid = True
 
-## Initializing Python lists to store our data
+
+
+## Initilizing Python lists to store our data
 MaskCoordinates = [] # User defined Mask Coordinated global variable. 
 TimeStampBuffer = []
 SnowCover = []
 SnowCoverBuffer = []
 prevThresh = []
 
+
 # Testing video
 imgArray = []
-
+SunFlag = []
 
 
 
@@ -85,6 +76,38 @@ imgArray = []
 
 
 #################### Helper Functions ####################
+# Function for processing the data from an image frame
+# takes the openCV image object for each frame as 'img' and the user define points
+# for each solar panel as 'Mask'(python list)
+
+## Perfoming Otsu Global Thresholding inside of Masked area. 
+## Count number of zeros outside of mask, remove them from frequency histogram
+## Compute Threshold normally. 
+def FindThreshold(dst, mask):
+    NumberOfZerosinBorder = np.where(mask==0)[0].size
+    hist = cv2.calcHist([dst],[0],None,[256],[0,256])
+    hist[0] = hist[0] - NumberOfZerosinBorder
+    hist_norm = hist.ravel()/hist.sum()
+    Q = hist_norm.cumsum()
+    bins = np.arange(256)
+    fn_min = np.inf
+    thresh = -1
+    for i in range(1,256):
+        p1,p2 = np.hsplit(hist_norm,[i]) # probabilities
+        q1,q2 = Q[i],Q[255]-Q[i] # cum sum of classes
+        if q1 < 1.e-6 or q2 < 1.e-6:
+            continue
+        b1,b2 = np.hsplit(bins,[i]) # weights
+        # finding means and variances
+        m1,m2 = np.sum(p1*b1)/q1, np.sum(p2*b2)/q2
+        v1,v2 = np.sum(((b1-m1)**2)*p1)/q1,np.sum(((b2-m2)**2)*p2)/q2
+        # calculates the minimization function
+        fn = v1*q1 + v2*q2
+        if fn < fn_min:
+            fn_min = fn
+            thresh = i
+
+    return thresh
 
 def search_for_file_path ():
     currdir = os.getcwd()
@@ -108,6 +131,29 @@ def OCRPreProcess(img):
         img = cv2.threshold(cv2.medianBlur(img, 1), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
         return img
 
+
+def SunriseFlag(CurrentTime):
+    SunRiseTime = sun.get_local_sunrise_time(CurrentTime)
+    SunSetTime = sun.get_local_sunset_time(CurrentTime)
+
+    CurrentTime = CurrentTime.replace(tzinfo=None)
+    SunRiseTime = SunRiseTime.replace(tzinfo=None)
+    SunSetTime = SunSetTime.replace(tzinfo=None)
+    FlagWindow = 2
+    SunRiseStart = SunRiseTime - timedelta(hours = FlagWindow)
+    SunRiseEnd = SunRiseTime + timedelta(hours = FlagWindow)
+    
+    SunSetStart = SunSetTime - timedelta(hours = FlagWindow)
+    SunSetEnd = SunSetTime + timedelta(hours = FlagWindow)
+    
+    if (CurrentTime >= SunRiseStart and CurrentTime <= SunRiseEnd):
+        SunFlag.append(1)
+    elif (CurrentTime >= SunSetStart and CurrentTime <= SunSetEnd):
+        SunFlag.append(1)
+    else:
+        SunFlag.append(0)
+
+
 def TimeStampCollation(img):
     global TimeStampBuffer
     ## Add PSA Classification
@@ -117,17 +163,23 @@ def TimeStampCollation(img):
         ## Preprocessing ##
         TimeStampCrop = OCRPreProcess(TimeStampCrop)
         ### Running OCR engine on image ###
+        #print('Running OCR')
+        TimingOCR = time.time()
         TimeStampText = reader.readtext(TimeStampCrop, allowlist = '0123456789:- ', width_ths=1)
         TimeStampText = [val[1] for val in TimeStampText]
-
+        TimingOCRELAPSED = time.time() - TimingOCR
+        #print('Frame TimeStamp: ',TimeStampText)
+        #print('OCR Processing took: ',str(TimingOCRELAPSED))
         
         ### Updating Global Data Lists ###
         CurrentTimeStamp = datetime.strptime(TimeStampText[0], "%Y-%m-%d %H:%M:%S")
         CurrentTimeStamp = CurrentTimeStamp.replace(second=00)
+        print(CurrentTimeStamp)
         TimeStampBuffer.append(CurrentTimeStamp)
         return CurrentTimeStamp
     else:    
         TimestampDifference =  TimeStampBuffer[1] - TimeStampBuffer[0]
+        #print(TimeStampBuffer[-1] + TimestampDifference)
         TimeStampBuffer.append(TimeStampBuffer[-1] + TimestampDifference)
         return TimeStampBuffer[-1]
         
@@ -151,13 +203,6 @@ def GetPrevThresh(PanelNumber,kernel):
         return ThreshList
 
 
-def hconcat_resize_min(im_list, interpolation=cv2.INTER_CUBIC):
-    h_min = min(im.shape[0] for im in im_list)
-    im_list_resize = [cv2.resize(im, (int(im.shape[1] * h_min / im.shape[0]), h_min), interpolation=interpolation)
-                      for im in im_list]
-    return cv2.hconcat(im_list_resize)
-
-
 def vconcat_resize_min(im_list, interpolation=cv2.INTER_CUBIC):
     w_min = min(im.shape[1] for im in im_list)
     im_list_resize = [cv2.resize(im, (w_min, int(im.shape[0] * w_min / im.shape[1])), interpolation=interpolation)
@@ -165,12 +210,9 @@ def vconcat_resize_min(im_list, interpolation=cv2.INTER_CUBIC):
     return cv2.vconcat(im_list_resize)
 
 
-
-
-
-
 def ImageProcess(img, PanelID):
     CurrentTimeStamp = TimeStampCollation(img)
+    SunriseFlag(CurrentTimeStamp)
     
     SnowCoverFrame = [CurrentTimeStamp]
     prevThreshFrame = []
@@ -179,7 +221,14 @@ def ImageProcess(img, PanelID):
     if (GenerateVid):
         PanelVidArray = []
 
+    ####### Extracting SnowCover Data with User Defined Masks #######
+    ### Cropping the Panels ###
+    sampleintensity = img[0:60,870:890].copy()
+    sampleintensity = cv2.cvtColor(sampleintensity, cv2.COLOR_BGR2GRAY)
+    sampleintensity = cv2.mean(sampleintensity)[0]
 
+    #print('Running Image Processing')
+    TimingImageProcess = time.time()
     for i in range(0,len(MaskCoordinates),4):
         pts = np.array([MaskCoordinates[i],MaskCoordinates[i+1],MaskCoordinates[i+2],MaskCoordinates[i+3]])
         
@@ -200,25 +249,87 @@ def ImageProcess(img, PanelID):
         cv2.bitwise_not(bg,bg, mask=mask)
         dst = bg+dst
 
-        ## Network Prediction
-        NetworkInput = cv2.resize(dst, (SIZE_Y, SIZE_X))
-        test_img_input = np.expand_dims(NetworkInput, 0)
-        test_img_input = preprocess_input1(test_img_input)
-        test_pred1 = model1.predict(test_img_input, verbose = False, use_multiprocessing = True)
-        test_prediction1 = np.argmax(test_pred1, axis=3)[0,:,:]
-        NetworkPred = cv2.resize(test_prediction1, (mask.shape[1], mask.shape[0]), interpolation = cv2.INTER_NEAREST_EXACT)
-        NetworkPred = cv2.normalize(src=NetworkPred, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        ### THIS IS VERY IMPORTANT!!!!! It is The Main Preprocessing ###
+        dst = cv2.medianBlur(dst, ksize=9)
+        dst = cv2.bilateralFilter(dst,9,75,75)
 
-        SnowCoverPercentage = math.floor((1 - ((len(np.extract(mask > 0, NetworkPred)) - np.count_nonzero(np.extract(mask > 0, NetworkPred)))/len(np.extract(mask > 0, NetworkPred))))*100)/100
+
+        # lab = cv2.cvtColor(dst, cv2.COLOR_BGR2LAB)
+        # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        # lab[...,0] = clahe.apply(lab[...,0])
+        # dst = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+        #dst = cv2.GaussianBlur(dst,(5,5),20)
+        #print(int(sampleintensity/5))
+        #M = np.ones(dst.shape,  dtype="uint8") * int(sampleintensity/5)
+        #dst = cv2.add(dst, M)
+        #print(int(sampleintensity/5))
+
+        ## Computing HSV Threshold (Color Threshold) ##
+        frame_HSV = cv2.cvtColor(dst, cv2.COLOR_BGR2HSV)
+        if sampleintensity > 120:
+            HSV_Threshold = cv2.inRange(frame_HSV, (0, 0, 90), (180, 15, 255)) ## HSV Range for White/Greyish
+        else:
+            HSV_Threshold = cv2.inRange(frame_HSV, (0, 0, 120), (180, 15, 255)) ## HSV Range for White/Greyish
+
+
+        ## Computing Otsu Threshold (Intensity Threshold) ##
+        dst = cv2.cvtColor(dst, cv2.COLOR_BGR2GRAY)
+        Thresh = FindThreshold(dst, mask)
+        prevThreshFrame.append(Thresh)
+
+
+        ## Gaussian Kernel Smoothing, on Otsu thresholds (kinda)##
+        if(len(prevThresh) >= 6):
+            ThreshList = GetPrevThresh(int(i/4), 6) 
+            CurrentMean = np.mean(ThreshList)
+            CurrentStd = np.std(ThreshList)
+
+            if (Thresh < CurrentMean - .5*CurrentStd or Thresh > CurrentMean + .5*CurrentStd):
+                Thresh = CurrentMean
+                
+        else:
+            ThreshList = GetPrevThresh(int(i/4), 0) 
+            if (len(ThreshList) > 0):
+                CurrentMean = np.mean(ThreshList)
+                CurrentStd = np.std(ThreshList)
+                if (Thresh < CurrentMean - .5*CurrentStd or Thresh > CurrentMean + .5*CurrentStd):
+                    Thresh = CurrentMean
+
+        Otsu_Threshold = cv2.threshold(dst,Thresh,255,cv2.THRESH_BINARY)[1]
+        
+        ## Comparing Both SnowCover Measurements ##
+        score = normalized_root_mse(Otsu_Threshold, HSV_Threshold)
+        global SnowCoverBuffer
+        if (score > .90 and len(SnowCoverBuffer) > 0):
+            HSVSnow = math.floor((1 - ((len(np.extract(mask > 0, HSV_Threshold)) - np.count_nonzero(np.extract(mask > 0, HSV_Threshold)))/len(np.extract(mask > 0, HSV_Threshold))))*100)/100
+            OTSUSnow = math.floor((1 - ((len(np.extract(mask > 0, Otsu_Threshold)) - np.count_nonzero(np.extract(mask > 0, Otsu_Threshold)))/len(np.extract(mask > 0, Otsu_Threshold))))*100)/100
+            if (len(SnowCoverBuffer) < 5):
+                SnowCoverKernel = SnowCoverBuffer
+            else:        
+                SnowCoverKernel = SnowCoverBuffer[-5:-1]
+
+            SnowCoverKernelList = [j[int(i/4)+1] for j in SnowCoverKernel]
+            meanSnowCover = np.mean(SnowCoverKernelList)
+            if (abs(HSVSnow - meanSnowCover) > abs(OTSUSnow - meanSnowCover)):
+                Final = Otsu_Threshold
+            else:
+                Final = HSV_Threshold
+
+        elif (len(SnowCoverBuffer) == 0):
+            Final = HSV_Threshold
+        else:
+            Final = Otsu_Threshold
+
+        SnowCoverPercentage = math.floor((1 - ((len(np.extract(mask > 0, Final)) - np.count_nonzero(np.extract(mask > 0, Final)))/len(np.extract(mask > 0, Final))))*100)/100
         SnowCoverFrame.append(SnowCoverPercentage)
 
         if (GenerateVid):
             cropped = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
-            PanelVidArray.append(cv2.hconcat([cropped, NetworkPred]))
+            PanelVidArray.append(cv2.hconcat([cropped, HSV_Threshold, Otsu_Threshold, Final, dst]))
     
     if (GenerateVid):
         global imgArray 
-        VideoFrame = hconcat_resize_min(PanelVidArray)
+        VideoFrame = vconcat_resize_min(PanelVidArray)
         height, width = VideoFrame.shape
         VideoHeader = np.zeros((75,width), np.uint8)
         cv2.putText(VideoHeader,CurrentTimeStamp.strftime("%Y-%m-%d %H:%M:00"),(0,60),cv2.FONT_HERSHEY_SIMPLEX,2,255,3)
@@ -227,7 +338,8 @@ def ImageProcess(img, PanelID):
 
     prevThresh.append(prevThreshFrame)
     SnowCoverBuffer.append(SnowCoverFrame)
-
+    TimingImageProcessELAPSED = time.time() - TimingImageProcess
+    #print('Image Processing took: ', str(TimingImageProcessELAPSED))
         
 # Callback function for getting coordinates of the solar panel mask from 
 # the click event. This will update the global MaskCoordinates Variable on Click
@@ -317,7 +429,7 @@ if __name__ == "__main__":
                 TimeLapseList.append(file)
 
        
-        for i in sorted(TimeLapseList):
+        for i in TimeLapseList:
             os.chdir(path) # We have to set the path everytime since cv2 can't handle relative paths without it.
             currentVideo = cv2.VideoCapture(i, cv2.IMREAD_GRAYSCALE) # Reading in the current TimeLapse Video
             success, img = currentVideo.read()
