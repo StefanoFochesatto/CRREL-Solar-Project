@@ -1,74 +1,59 @@
 #!/usr/bin/env python3
 
 #################### Dependencies #################### 
-# For Data Management
-from http.server import ThreadingHTTPServer
-from tabnanny import verbose
+## Data Management
 import numpy as np
 import pandas as pd
 import csv
-# For Directory Management
+## Directory Management
 import os 
-# For Image Processing
-from PIL import Image
+## Image Processing
 import cv2  
 import copy
 import math
-# For Optical Character Recognition
+import time
+
+## Optical Character Recognition
 import easyocr
 from datetime import datetime 
 from datetime import timedelta
 
-# GUI and Terminal Elements
+## GUI and Terminal Elements
 from progress.bar import Bar
 from progress.spinner import MoonSpinner
 import tkinter
 from tkinter import filedialog
 from tkinter import messagebox
 
-
-
+## Deeplearning Model
 import tensorflow as tf
 import segmentation_models as sm
-import glob
-from matplotlib import pyplot as plt
 import keras 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from tensorflow.keras.utils import normalize
 from keras.metrics import MeanIoU
 from keras.utils import to_categorical
 from keras.models import load_model
 
 
-
-
+#################### Global Variables #################### 
+## Segmentation Model Variables
 model1 = load_model('saved_models/linkNet_arch_res50_backbone_50epochs.hdf5', compile=False)
 BACKBONE1 = 'resnet50'
-preprocess_input1 = sm.get_preprocessing(BACKBONE1)
-root = tkinter.Tk()
-root.withdraw() #use to hide tkinter window
-#Resizing images, if needed
+preprocess_input = sm.get_preprocessing(BACKBONE1)
 SIZE_X = 416 
 SIZE_Y = 640
 
+## Initializing OCR Engine
+reader = easyocr.Reader(['en']) 
 
-
-
-
-
-#################### Global Variables #################### 
-reader = easyocr.Reader(['en']) # Initializing OCR Engine
 PanelDictionary = { 
     '2':[10, 8, 2, 5],
     '1':[1, 4, 7, 11], 
     '3':[9, 3, 6, 12],
     'A':['all', 'all', 'all', 'all']
 }
-GenerateVid = True
 
-## Initializing Python lists to store our data
-MaskCoordinates = [] # User defined Mask Coordinated global variable. 
+## Data storage python lists 
+MaskCoordinates = []
 TimeStampBuffer = []
 SnowCover = []
 SnowCoverBuffer = []
@@ -78,8 +63,9 @@ prevThresh = []
 imgArray = []
 
 
-
-
+## Initialize GUI
+root = tkinter.Tk()
+root.withdraw() 
 
 
 
@@ -101,12 +87,13 @@ def OCRPreProcess(img):
         # Converting to GrayScale
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         # Dilation and Erosion
-        kernel = np.ones((1, 1), np.uint8)
-        img = cv2.dilate(img, kernel, iterations=10)
+        kernel = np.ones((3, 3), np.uint8)
+        img = cv2.dilate(img, kernel, iterations=2)
         img = cv2.erode(img, kernel, iterations=1)
         # Applying Blur
         img = cv2.threshold(cv2.medianBlur(img, 1), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
         return img
+
 
 def TimeStampCollation(img):
     global TimeStampBuffer
@@ -163,11 +150,7 @@ def vconcat_resize_min(im_list, interpolation=cv2.INTER_CUBIC):
     im_list_resize = [cv2.resize(im, (w_min, int(im.shape[0] * w_min / im.shape[1])), interpolation=interpolation)
                       for im in im_list]
     return cv2.vconcat(im_list_resize)
-
-
-
-
-
+    
 
 def ImageProcess(img, PanelID):
     CurrentTimeStamp = TimeStampCollation(img)
@@ -179,7 +162,7 @@ def ImageProcess(img, PanelID):
     if (GenerateVid):
         PanelVidArray = []
 
-
+    TimingImgProcess = time.time()
     for i in range(0,len(MaskCoordinates),4):
         pts = np.array([MaskCoordinates[i],MaskCoordinates[i+1],MaskCoordinates[i+2],MaskCoordinates[i+3]])
         
@@ -200,10 +183,10 @@ def ImageProcess(img, PanelID):
         cv2.bitwise_not(bg,bg, mask=mask)
         dst = bg+dst
 
-        ## Network Prediction
+        ## Network Prediction  ###To parallelize take this out of the for loop, and pass in a tensor of the four panels. 
         NetworkInput = cv2.resize(dst, (SIZE_Y, SIZE_X))
         test_img_input = np.expand_dims(NetworkInput, 0)
-        test_img_input = preprocess_input1(test_img_input)
+        test_img_input = preprocess_input(test_img_input)
         test_pred1 = model1.predict(test_img_input, verbose = False, use_multiprocessing = True)
         test_prediction1 = np.argmax(test_pred1, axis=3)[0,:,:]
         NetworkPred = cv2.resize(test_prediction1, (mask.shape[1], mask.shape[0]), interpolation = cv2.INTER_NEAREST_EXACT)
@@ -211,6 +194,9 @@ def ImageProcess(img, PanelID):
 
         SnowCoverPercentage = math.floor((1 - ((len(np.extract(mask > 0, NetworkPred)) - np.count_nonzero(np.extract(mask > 0, NetworkPred)))/len(np.extract(mask > 0, NetworkPred))))*100)/100
         SnowCoverFrame.append(SnowCoverPercentage)
+
+        TimingImgProcessELAPSED = time.time() - TimingImgProcess
+        print('OCR Processing took: ',str(TimingImgProcessELAPSED))
 
         if (GenerateVid):
             cropped = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
@@ -277,6 +263,7 @@ def generateMasks(img):
             cv2.destroyAllWindows()
             cv2.waitKey(1)
             break
+
 
 def CollateData():    
 
