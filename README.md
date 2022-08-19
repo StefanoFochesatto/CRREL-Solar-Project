@@ -139,3 +139,5 @@ When ingesting a new batch of videos, redo this step with only new videos and ap
 
 ## Tips
 The new somewhat parallelized script runs around 2.5x faster than the previous version, so it's more feasible to processes longer videos and larger batches of videos. Be very careful when clicking the corners of the panels if you miss click it will likely be easier to close out the script and restart on the video directory that you were processing when you miss clicked. Also when clicking the corner of the panels, don't go all the way out to the edge, leave a little bit of space between the edge and the point where you click. This is because sometimes the algorithm confuses the gaps where we can see through the bottom of the panel as snow. 
+
+## [Full Report](https://raw.githubusercontent.com/StefanoFochesatto/CRREL-Solar-Project/main/Report/CRREL%20Solar%20Imaging%20Project.pdf)
